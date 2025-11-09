@@ -2,9 +2,9 @@
 import os
 import logging
 import asyncio
-import requests
+import aiohttp  # Импортируйте aiohttp для асинхронных HTTP запросов
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
+from aiogram import filters  # Изменено на import filters
 
 # ================= Настройки =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -18,12 +18,12 @@ logging.basicConfig(level=logging.INFO)
 
 # ================= Инициализация бота =================
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot)  # Инициализируем Dispatcher с объектом bot
 
 # ================= Обработчики =================
 
 # Команда /start
-@dp.message(Command("start"))
+@dp.message(filters.Command("start"))
 async def cmd_start(message: types.Message):
     await message.reply(
         "Привет! Я оживляю фото 😎\n"
@@ -44,37 +44,32 @@ async def handle_photo(message: types.Message):
         "Content-Type": "application/json"
     }
 
-    with open(photo_path, "rb") as f:
-        image_bytes = f.read()
-
-    data = {
-        "version": "model_version_id",  # Замените на вашу модель Replicate
-        "input": {
-            "image": image_bytes.hex(),
-            "prompt": "оживи фото"
-        }
-    }
-
-    try:
-        response = requests.post(
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
             "https://api.replicate.com/v1/predictions",
             headers=headers,
-            json=data
-        )
-        response.raise_for_status()
-        result_url = response.json().get("output", [None])[0]
+            json={
+                "version": "model_version_id",  # Замените на вашу модель Replicate
+                "input": {
+                    "image": photo_path,  # Замените на URL, если требуется
+                    "prompt": "оживи фото"
+                }
+            }
+        ) as response:
+            if response.status == 200:
+                result = await response.json()
+                result_url = result.get("output", [None])[0]
 
-        if result_url:
-            await message.reply(f"Вот ваше оживлённое фото: {result_url}")
-        else:
-            await message.reply("Что-то пошло не так при оживлении фото 😢")
-
-    except Exception as e:
-        await message.reply(f"Произошла ошибка при обработке фото: {e}")
+                if result_url:
+                    await message.reply(f"Вот ваше оживлённое фото: {result_url}")
+                else:
+                    await message.reply("Что-то пошло не так при оживлении фото 😢")
+            else:
+                await message.reply("Ошибка при запросе к API: неверный ответ от сервера.")
 
 # ================= Запуск бота =================
 async def main():
-    await dp.start_polling(bot)
+    await dp.start_polling()
 
 if __name__ == "__main__":
     asyncio.run(main())
