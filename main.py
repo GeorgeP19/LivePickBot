@@ -4,6 +4,7 @@ import logging
 import asyncio
 import requests
 from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
 
 # ================= Настройки =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -22,7 +23,7 @@ dp = Dispatcher()
 # ================= Обработчики =================
 
 # Команда /start
-@dp.message(commands=["start"])
+@dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.reply(
         "Привет! Я оживляю фото 😎\n"
