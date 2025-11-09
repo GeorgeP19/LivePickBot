@@ -1,0 +1,5 @@
+aiogram==3.*
+python-dotenv
+yookassa
+replicate
+requests
