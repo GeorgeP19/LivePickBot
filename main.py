@@ -2,9 +2,13 @@
 import os
 import logging
 import asyncio
-import aiohttp  # Импортируйте aiohttp для асинхронных HTTP запросов
+import aiohttp
 from aiogram import Bot, Dispatcher, types
-from aiogram import filters  # Изменено на import filters
+from aiogram.filters import Command  # <-- правильный импорт
+from dotenv import load_dotenv
+
+# ================= Загрузка окружения =================
+load_dotenv()
 
 # ================= Настройки =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -18,12 +22,12 @@ logging.basicConfig(level=logging.INFO)
 
 # ================= Инициализация бота =================
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)  # Инициализируем Dispatcher с объектом bot
+dp = Dispatcher()
 
 # ================= Обработчики =================
 
 # Команда /start
-@dp.message(filters.Command("start"))
+@dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.reply(
         "Привет! Я оживляю фото 😎\n"
@@ -38,38 +42,37 @@ async def handle_photo(message: types.Message):
     await photo.download(destination_file=photo_path)
     await message.reply("Фото получено! Чтобы оживить фото, пожалуйста, оплатите 100₽.")
 
-    # ================= Пример запроса к Replicate =================
     headers = {
         "Authorization": f"Token {REPLICATE_API_TOKEN}",
         "Content-Type": "application/json"
     }
 
+    # ⚙️ Асинхронный запрос к Replicate
     async with aiohttp.ClientSession() as session:
-        async with session.post(
-            "https://api.replicate.com/v1/predictions",
-            headers=headers,
-            json={
-                "version": "model_version_id",  # Замените на вашу модель Replicate
-                "input": {
-                    "image": photo_path,  # Замените на URL, если требуется
-                    "prompt": "оживи фото"
-                }
+        payload = {
+            "version": "model_version_id",  # вставь ID модели Replicate
+            "input": {
+                "image": photo_path,  # должен быть URL или base64
+                "prompt": "оживи фото"
             }
-        ) as response:
+        }
+
+        async with session.post("https://api.replicate.com/v1/predictions",
+                                headers=headers, json=payload) as response:
             if response.status == 200:
                 result = await response.json()
                 result_url = result.get("output", [None])[0]
-
                 if result_url:
                     await message.reply(f"Вот ваше оживлённое фото: {result_url}")
                 else:
                     await message.reply("Что-то пошло не так при оживлении фото 😢")
             else:
-                await message.reply("Ошибка при запросе к API: неверный ответ от сервера.")
+                text = await response.text()
+                await message.reply(f"Ошибка Replicate: {response.status}\n{text}")
 
 # ================= Запуск бота =================
 async def main():
-    await dp.start_polling()
+    await dp.start_polling(bot)  # <-- нужно передавать bot в polling
 
 if __name__ == "__main__":
     asyncio.run(main())
