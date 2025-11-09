@@ -3,8 +3,8 @@ import os
 import logging
 import asyncio
 import aiohttp
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command  # <-- правильный импорт
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
 from dotenv import load_dotenv
 
 # ================= Загрузка окружения =================
@@ -13,20 +13,16 @@ load_dotenv()
 # ================= Настройки =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
-YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
-YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # если используем webhook
 
 # ================= Логирование =================
 logging.basicConfig(level=logging.INFO)
 
-# ================= Инициализация бота =================
+# ================= Инициализация =================
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # ================= Обработчики =================
 
-# Команда /start
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.reply(
@@ -34,8 +30,7 @@ async def cmd_start(message: types.Message):
         "Отправь мне фотографию, и я покажу, как она оживает после оплаты 100₽."
     )
 
-# Обработка фото
-@dp.message(content_types=types.ContentType.PHOTO)
+@dp.message(F.photo)  # <-- заменили content_types на F.photo
 async def handle_photo(message: types.Message):
     photo = message.photo[-1]
     photo_path = "user_photo.jpg"
@@ -47,12 +42,11 @@ async def handle_photo(message: types.Message):
         "Content-Type": "application/json"
     }
 
-    # ⚙️ Асинхронный запрос к Replicate
     async with aiohttp.ClientSession() as session:
         payload = {
-            "version": "model_version_id",  # вставь ID модели Replicate
+            "version": "model_version_id",  # Укажи ID модели Replicate
             "input": {
-                "image": photo_path,  # должен быть URL или base64
+                "image": photo_path,  # В реальности сюда передаётся URL или base64
                 "prompt": "оживи фото"
             }
         }
@@ -70,9 +64,9 @@ async def handle_photo(message: types.Message):
                 text = await response.text()
                 await message.reply(f"Ошибка Replicate: {response.status}\n{text}")
 
-# ================= Запуск бота =================
+# ================= Запуск =================
 async def main():
-    await dp.start_polling(bot)  # <-- нужно передавать bot в polling
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
