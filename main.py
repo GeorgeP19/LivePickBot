@@ -2,43 +2,33 @@
 import os
 import logging
 from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
 import requests
+import asyncio
 
-# Настройки из .env
+# Настройки
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
-YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация бота
+# Инициализация
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()
 
 # Команда /start
-@dp.message_handler(commands=["start"])
+@dp.message(commands=["start"])
 async def start(message: types.Message):
-    await message.reply(
-        "Привет! Отправь фото, и я его оживлю после оплаты 100₽."
-    )
+    await message.reply("Привет! Отправь фото, и я его оживлю после оплаты 100₽.")
 
 # Обработка фото
-@dp.message_handler(content_types=['photo'])
+@dp.message(content_types=['photo'])
 async def handle_photo(message: types.Message):
-    # Скачиваем фото
     photo = message.photo[-1]
     photo_path = "user_photo.jpg"
     await photo.download(destination_file=photo_path)
 
-    # Предложение оплаты
     await message.reply("Чтобы оживить фото, пожалуйста, оплатите 100₽.")
-
-    # ======= ЗДЕСЬ ВСТАВЬ ЛОГИКУ ОПЛАТЫ через ЮKassa =======
-    # После успешной оплаты вызываем Replicate
 
     # Пример запроса к Replicate (замени на свою модель)
     headers = {
@@ -50,7 +40,7 @@ async def handle_photo(message: types.Message):
         image_bytes = f.read()
 
     data = {
-        "version": "model_version_id",  # замените на свою модель
+        "version": "model_version_id",
         "input": {
             "image": image_bytes.hex(),
             "prompt": "оживи фото"
@@ -69,13 +59,10 @@ async def handle_photo(message: types.Message):
     else:
         await message.reply("Что-то пошло не так при оживлении фото 😢")
 
-# Webhook (если используем)
-async def on_startup(dp):
-    await bot.set_webhook(WEBHOOK_URL)
-
-async def on_shutdown(dp):
-    await bot.delete_webhook()
 
 # Запуск бота
+async def main():
+    await dp.start_polling(bot)
+
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    asyncio.run(main())
