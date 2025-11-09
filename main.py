@@ -8,7 +8,6 @@ from aiogram import Bot, Dispatcher, types
 # ================= Настройки =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
-# Здесь можно добавить переменные для YooKassa
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # если используем webhook
