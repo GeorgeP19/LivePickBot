@@ -13,7 +13,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # URL вебхука Render, например: https://your-app.onrender.com/webhook
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Например: https://your-app.onrender.com/webhook
 
 if not all([BOT_TOKEN, REPLICATE_API_TOKEN, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, WEBHOOK_URL]):
     raise ValueError("❌ Проверьте все переменные окружения!")
@@ -24,6 +24,9 @@ logging.basicConfig(level=logging.INFO)
 # ================= Инициализация бота =================
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+# ================= Глобальная сессия aiohttp =================
+session = aiohttp.ClientSession()
 
 # Настройки YouKassa
 Configuration.account_id = YOOKASSA_SHOP_ID
@@ -66,7 +69,6 @@ async def handle_photo(message: types.Message):
 # В реальном проекте нужно настроить webhook YouKassa, который будет POST на /payment
 async def handle_payment_webhook(request):
     data = await request.json()
-    # Здесь можно проверять статус платежа: data['object']['status'] == 'succeeded'
     logging.info(f"Получен вебхук YouKassa: {data}")
     return web.Response(text="OK")
 
@@ -93,8 +95,13 @@ async def main():
     await site.start()
 
     logging.info("✅ Bot is running via webhook on Render")
-    while True:
-        await asyncio.sleep(3600)  # держим приложение живым
+    
+    try:
+        while True:
+            await asyncio.sleep(3600)  # держим приложение живым
+    finally:
+        await session.close()  # ✅ Закрываем глобальную сессию при завершении
+        await bot.session.close()  # Закрываем сессию бота
 
 if __name__ == "__main__":
     asyncio.run(main())
