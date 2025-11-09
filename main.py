@@ -3,11 +3,12 @@ import os
 import logging
 import asyncio
 import aiohttp
+from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from dotenv import load_dotenv
 
-# ================= Загрузка окружения =================
+# ================= Загрузка переменных окружения =================
 load_dotenv()
 
 # ================= Настройки =================
@@ -30,7 +31,7 @@ async def cmd_start(message: types.Message):
         "Отправь мне фотографию, и я покажу, как она оживает после оплаты 100₽."
     )
 
-@dp.message(F.photo)  # <-- заменили content_types на F.photo
+@dp.message(F.photo)
 async def handle_photo(message: types.Message):
     photo = message.photo[-1]
     photo_path = "user_photo.jpg"
@@ -46,7 +47,7 @@ async def handle_photo(message: types.Message):
         payload = {
             "version": "model_version_id",  # Укажи ID модели Replicate
             "input": {
-                "image": photo_path,  # В реальности сюда передаётся URL или base64
+                "image": photo_path,  # В реальности — URL или base64
                 "prompt": "оживи фото"
             }
         }
@@ -64,8 +65,21 @@ async def handle_photo(message: types.Message):
                 text = await response.text()
                 await message.reply(f"Ошибка Replicate: {response.status}\n{text}")
 
-# ================= Запуск =================
+# ================= Минимальный веб-сервер для Render =================
+async def handle(request):
+    return web.Response(text="Bot is alive")
+
 async def main():
+    # Создаём aiohttp сервер, чтобы Render видел открытый порт
+    app = web.Application()
+    app.add_routes([web.get("/", handle)])
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 10000)
+    await site.start()
+
+    # Запускаем Telegram бота (polling)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
