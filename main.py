@@ -6,7 +6,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 import replicate
 import yookassa
 from yookassa import Configuration, Payment
-from aiogram import Bot  # не нужен, но оставим python-telegram-bot
+# не нужен, но оставим python-telegram-bot
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, Request, Depends, HTTPException
@@ -285,4 +285,5 @@ if __name__ == "__main__":
     # А бота — в фоновом потоке
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
+
     run_webhook_server()
