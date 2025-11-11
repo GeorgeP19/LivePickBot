@@ -21,7 +21,9 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import uvicorn
 
 # === Логирование ===
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 # === Конфигурация ===
@@ -56,7 +58,7 @@ async def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
 async def root():
     return {"status": "ok", "message": "Бот и сервер FastAPI работают!"}
 
-# === Вебхук ЮKassa ===
+# === Вебхук YooKassa ===
 @app.post("/yookassa_webhook")
 async def yookassa_webhook(request: Request):
     payload = await request.body()
@@ -106,7 +108,7 @@ async def admin_panel():
         cur.execute("SELECT COUNT(*) FROM user_sessions WHERE status = 'succeeded'")
         successful_payments = cur.fetchone()[0] or 0
 
-        total_revenue = successful_payments * 100
+        total_revenue = successful_payments * 100  # цена за сессию
 
         cur.execute("""
             SELECT user_id, prompt, status, created_at
@@ -121,7 +123,10 @@ async def admin_panel():
         sessions_html = ""
         for user_id, prompt, status, created_at in sessions:
             emoji = "✅" if status == "succeeded" else "⏳"
-            sessions_html += f"<tr><td>{user_id}</td><td>{prompt[:50]}...</td><td>{emoji} {status}</td><td>{created_at.strftime('%Y-%m-%d %H:%M')}</td></tr>"
+            sessions_html += (
+                f"<tr><td>{user_id}</td><td>{prompt[:50]}...</td>"
+                f"<td>{emoji} {status}</td><td>{created_at.strftime('%Y-%m-%d %H:%M')}</td></tr>"
+            )
 
         html = f"""
         <!DOCTYPE html>
@@ -129,8 +134,8 @@ async def admin_panel():
         <head><meta charset="utf-8"><title>Админка</title></head>
         <body>
             <h1>🤖 Админ-панель</h1>
-            <p>Всего пользователей: {total_users or 0}</p>
-            <p>Успешных оплат: {successful_payments or 0}</p>
+            <p>Всего пользователей: {total_users}</p>
+            <p>Успешных оплат: {successful_payments}</p>
             <p>Доход: {format_currency(total_revenue)}</p>
             <table border="1">
                 <tr><th>User ID</th><th>Промпт</th><th>Статус</th><th>Дата</th></tr>
@@ -157,7 +162,10 @@ async def process_animation_async(user_id: int, payment_id: str):
 
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT file_path, prompt FROM user_sessions WHERE user_id = %s AND payment_id = %s", (user_id, payment_id))
+        cur.execute(
+            "SELECT file_path, prompt FROM user_sessions WHERE user_id = %s AND payment_id = %s",
+            (user_id, payment_id)
+        )
         row = cur.fetchone()
         cur.close()
         conn.close()
@@ -168,18 +176,28 @@ async def process_animation_async(user_id: int, payment_id: str):
 
         image_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{row['file_path']}"
 
-        output = replicate.run(
-            "cjwbw/animatediff:8793444502895298267891e27483567237301855498564957152087314028758",
-            input={
-                "prompt": row["prompt"],
-                "input_image": image_url,
-                "num_frames": 16,
-                "fps": 8
-            }
-        )
+        try:
+            output = replicate.run(
+                "cjwbw/animatediff:8793444502895298267891e27483567237301855498564957152087314028758",
+                input={
+                    "prompt": row["prompt"],
+                    "input_image": image_url,
+                    "num_frames": 16,
+                    "fps": 8
+                }
+            )
+        except Exception as e:
+            logger.error(f"Replicate error: {e}")
+            await bot_instance.send_message(chat_id=user_id, text="❌ Ошибка при обработке. Попробуйте позже.")
+            return
 
-    if isinstance(output, list) and len(output) > 0:
-    animation_url = output[0]
-    else:
-    animation_url = None
+        if isinstance(output, list) and len(output) > 0:
+            animation_url = output[0]
+            await bot_instance.send_animation(chat_id=user_id, animation=animation_url)
+            await bot_instance.send_message(chat_id=user_id, text="🎉 Вот твоя анимация! Спасибо за оплату!")
+        else:
+            await bot_instance.send_message(chat_id=user_id, text="❌ Не удалось получить анимацию.")
 
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        await bot_instance.send_message(chat_id=user_id, text="❌ Произошла ошибка. Попробуйте позже.")
