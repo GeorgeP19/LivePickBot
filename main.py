@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import asyncio
 import os
 import threading
@@ -7,6 +7,7 @@ import datetime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+
 import replicate
 import yookassa
 from yookassa import Configuration, Payment
@@ -43,21 +44,15 @@ def get_db_connection():
 
 # === FastAPI ===
 app = FastAPI()
-
-# === Аутентификация ===
 security = HTTPBasic()
+
 def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
     if credentials.username == ADMIN_LOGIN and credentials.password == ADMIN_PASSWORD:
         return True
     raise HTTPException(status_code=401, detail="Unauthorized")
 
-# === Корень / для проверки ===
-@app.get("/")
-async def root():
-    return {"status": "ok", "message": "Бот и сервер FastAPI работают!"}
-
 # === Вебхук ЮKassa ===
-@app.post("/yookassa_webhook")
+@app.post("/webhook")
 async def yookassa_webhook(request: Request):
     payload = await request.body()
     signature = request.headers.get("X-Cloud-Signature")
@@ -72,7 +67,7 @@ async def yookassa_webhook(request: Request):
             user_id = int(payment.metadata.get("user_id"))
             await process_animation_async(user_id, payment.id)
 
-            # Синхронная БД
+            # Обновление статуса в БД
             conn = get_db_connection()
             cur = conn.cursor()
             cur.execute(
@@ -82,12 +77,13 @@ async def yookassa_webhook(request: Request):
             conn.commit()
             cur.close()
             conn.close()
+
     except Exception as e:
         logger.error(f"Webhook error: {e}")
 
     return {"status": "ok"}
 
-# === Админка ===
+# === Админ-панель ===
 def format_currency(rubles: int) -> str:
     return f"{rubles} ₽"
 
@@ -103,7 +99,7 @@ async def admin_panel():
         cur.execute("SELECT COUNT(*) FROM user_sessions WHERE status = 'succeeded'")
         successful_payments = cur.fetchone()[0] or 0
 
-        total_revenue = successful_payments * 100
+        total_revenue = successful_payments * 100  # 100 ₽ за анимацию
 
         cur.execute("""
             SELECT user_id, prompt, status, created_at
@@ -123,20 +119,50 @@ async def admin_panel():
         html = f"""
         <!DOCTYPE html>
         <html>
-        <head><meta charset="utf-8"><title>Админка</title></head>
+        <head>
+            <title>📊 Админка — Telegram Bot</title>
+            <meta charset="utf-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }}
+                .card {{ background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+                table {{ width: 100%; border-collapse: collapse; }}
+                th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
+                th {{ background: #eee; }}
+            </style>
+        </head>
         <body>
-            <h1>🤖 Админ-панель</h1>
-            <p>Всего пользователей: {total_users}</p>
-            <p>Успешных оплат: {successful_payments}</p>
-            <p>Доход: {format_currency(total_revenue)}</p>
-            <table border="1">
-                <tr><th>User ID</th><th>Промпт</th><th>Статус</th><th>Дата</th></tr>
-                {sessions_html if sessions_html else "<tr><td colspan='4'>Нет данных</td></tr>"}
-            </table>
+            <h1>🤖 Админ-панель бота</h1>
+
+            <div class="card">
+                <h2>📈 Статистика</h2>
+                <p><strong>Всего пользователей:</strong> {total_users}</p>
+                <p><strong>Успешных оплат:</strong> {successful_payments}</p>
+                <p><strong>Доход:</strong> <span style="color: green; font-weight: bold;">{format_currency(total_revenue)}</span></p>
+            </div>
+
+            <div class="card">
+                <h2>📋 Последние сессии (10)</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>User ID</th>
+                            <th>Промпт</th>
+                            <th>Статус</th>
+                            <th>Дата</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {sessions_html if sessions_html else "<tr><td colspan='4'>Нет данных</td></tr>"}
+                    </tbody>
+                </table>
+            </div>
+
+            <p><small>Обновляется в реальном времени. Обнови страницу.</small></p>
         </body>
         </html>
         """
         return HTMLResponse(html)
+
     except Exception as e:
         logger.error(f"Admin panel error: {e}")
         return HTMLResponse(f"<h1>Ошибка: {e}</h1>", status_code=500)
@@ -146,11 +172,14 @@ bot_instance = None
 
 async def process_animation_async(user_id: int, payment_id: str):
     try:
-        await bot_instance.send_message(chat_id=user_id, text="🎨 Обрабатываю твоё фото...")
+        await bot_instance.send_message(chat_id=user_id, text="🎨 Обрабатываю твоё фото... Это займёт 10–60 секунд.")
 
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT file_path, prompt FROM user_sessions WHERE user_id = %s AND payment_id = %s", (user_id, payment_id))
+        cur.execute(
+            "SELECT file_path, prompt FROM user_sessions WHERE user_id = %s AND payment_id = %s",
+            (user_id, payment_id)
+        )
         row = cur.fetchone()
         cur.close()
         conn.close()
@@ -174,10 +203,13 @@ async def process_animation_async(user_id: int, payment_id: str):
         if isinstance(output, list) and len(output) > 0:
             animation_url = output[0]
             await bot_instance.send_animation(chat_id=user_id, animation=animation_url)
-            await bot_instance.send_message(chat_id=user_id, text="🎉 Вот твоя анимация!")
+            await bot_instance.send_message(chat_id=user_id, text="🎉 Вот твоя анимация! Спасибо за оплату!")
 
             if ADMIN_USER_ID:
-                await bot_instance.send_message(chat_id=ADMIN_USER_ID, text=f"💰 Новая оплата!\nUser: {user_id}\nДоход: +100 ₽")
+                await bot_instance.send_message(
+                    chat_id=ADMIN_USER_ID,
+                    text=f"💰 Новая оплата!\nUser: {user_id}\nПромпт: {row['prompt']}\nДоход: +100 ₽"
+                )
         else:
             await bot_instance.send_message(chat_id=user_id, text="❌ Не удалось получить анимацию.")
 
@@ -185,9 +217,12 @@ async def process_animation_async(user_id: int, payment_id: str):
         logger.error(f"Replicate error: {e}")
         await bot_instance.send_message(chat_id=user_id, text="❌ Ошибка при обработке. Попробуйте позже.")
 
-# === Телеграм-бот ===
+# === Telegram Bot ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Привет! Отправь фото для анимации.")
+    await update.message.reply_text(
+        "👋 Привет! Пришли мне фото и напиши, что ты хочешь увидеть, "
+        "и я оживлю его за 100 ₽. После оплаты — получишь анимацию!"
+    )
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -200,6 +235,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file = await context.bot.get_file(photo.file_id)
     file_path = file.file_path
 
+    # Создаём платёж
     payment = Payment.create({
         "amount": {"value": "100.00", "currency": "RUB"},
         "confirmation": {"type": "redirect", "return_url": f"https://t.me/{context.bot.username}"},
@@ -208,6 +244,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "metadata": {"user_id": str(user_id)}
     })
 
+    # Сохраняем в БД
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
@@ -224,7 +261,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     keyboard = [[InlineKeyboardButton("💳 Оплатить 100 ₽", url=payment.confirmation.confirmation_url)]]
-    await update.message.reply_text("✅ Фото получено! Оплати 100 ₽ для обработки.", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(
+        "✅ Фото получено!\n\n💰 Оплати 100 ₽ — и я сразу начну обработку!",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 # === Запуск ===
 def run_bot():
@@ -243,5 +283,4 @@ def run_webhook_server():
 if __name__ == "__main__":
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
-
     run_webhook_server()
