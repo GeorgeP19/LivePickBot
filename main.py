@@ -56,16 +56,19 @@ async def yookassa_webhook(request: Request):
     payload = await request.body()
     signature = request.headers.get("X-Cloud-Signature")
     
-    # Проверка подписи (опционально, но рекомендуется)
     from yookassa.domain.notification import WebhookNotification
+    import logging
+    logger = logging.getLogger(__name__)
+    
     try:
-        notification = WebhookNotification(payload, signature)
+        notification = WebhookNotification(payload.decode("utf-8"), signature)
         payment = notification.object
         
         if payment.status == "succeeded":
             user_id = int(payment.metadata.get("user_id"))
             await process_animation_async(user_id, payment.id)
-            # Обновить статус в БД
+
+            # Синхронная БД (временно)
             conn = get_db_connection()
             cur = conn.cursor()
             cur.execute(
@@ -75,10 +78,13 @@ async def yookassa_webhook(request: Request):
             conn.commit()
             cur.close()
             conn.close()
-            return {"status": "ok"}
+
     except Exception as e:
         logger.error(f"Webhook error: {e}")
-        return {"error": str(e)}
+
+    # Всегда возвращаем 200 OK
+    return {"status": "ok"}
+
 
 # === Админ-панель ===
 def format_currency(rubles: int) -> str:
@@ -288,5 +294,6 @@ if __name__ == "__main__":
     bot_thread.start()
 
     run_webhook_server()
+
 
 
