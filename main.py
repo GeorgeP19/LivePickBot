@@ -11,8 +11,8 @@ import replicate
 import yookassa
 from yookassa import Configuration, Payment
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.extras import RealDictCursor
 
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse
@@ -41,7 +41,7 @@ os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
 
 # === Инициализация БД ===
 def get_db_connection():
-    return psycopg2.connect(DATABASE_URL, sslmode='require')
+    return psycopg.connect(DATABASE_URL, sslmode='require')
 
 # === FastAPI ===
 app = FastAPI()
@@ -201,5 +201,6 @@ async def process_animation_async(user_id: int, payment_id: str):
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         await bot_instance.send_message(chat_id=user_id, text="❌ Произошла ошибка. Попробуйте позже.")
+
 
 
