@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: telegram-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: BOT_TOKEN
+        fromEnv: BOT_TOKEN
+      - key: REPLICATE_API_TOKEN
+        fromEnv: REPLICATE_API_TOKEN
+      - key: YOOKASSA_SHOP_ID
+        fromEnv: YOOKASSA_SHOP_ID
+      - key: YOOKASSA_SECRET_KEY
+        fromEnv: YOOKASSA_SECRET_KEY
+      - key: DATABASE_URL
+        fromService: telegram-bot-db
+      - key: ADMIN_USER_ID
+        fromEnv: ADMIN_USER_ID
+      - key: ADMIN_LOGIN
+        fromEnv: ADMIN_LOGIN
+      - key: ADMIN_PASSWORD
+        fromEnv: ADMIN_PASSWORD
+    env: production
+databases:
+  - name: telegram-bot-db
+    plan: free
+    region: frankfurt  # или singapore
