@@ -51,23 +51,33 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
         return True
     raise HTTPException(status_code=401, detail="Unauthorized")
 
+# === FastAPI для вебхука и админки ===
+app = FastAPI()
+
+# === Аутентификация ===
+security = HTTPBasic()
+
+def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
+    if credentials.username == ADMIN_LOGIN and credentials.password == ADMIN_PASSWORD:
+        return True
+    raise HTTPException(status_code=401, detail="Unauthorized")
+
 # === Вебхук ЮKassa ===
 @app.post("/webhook")
 async def yookassa_webhook(request: Request):
     payload = await request.body()
     signature = request.headers.get("X-Cloud-Signature")
-
+    
+    # Проверка подписи (опционально, но рекомендуется)
     from yookassa.domain.notification import WebhookNotification
-
     try:
-        notification = WebhookNotification(payload.decode("utf-8"), signature)
+        notification = WebhookNotification(payload, signature)
         payment = notification.object
-
+        
         if payment.status == "succeeded":
             user_id = int(payment.metadata.get("user_id"))
             await process_animation_async(user_id, payment.id)
-
-            # Обновление статуса в БД
+            # Обновить статус в БД
             conn = get_db_connection()
             cur = conn.cursor()
             cur.execute(
@@ -77,11 +87,10 @@ async def yookassa_webhook(request: Request):
             conn.commit()
             cur.close()
             conn.close()
-
+            return {"status": "ok"}
     except Exception as e:
         logger.error(f"Webhook error: {e}")
-
-    return {"status": "ok"}
+        return {"error": str(e)}
 
 # === Админ-панель ===
 def format_currency(rubles: int) -> str:
@@ -93,6 +102,7 @@ async def admin_panel():
         conn = get_db_connection()
         cur = conn.cursor()
 
+        # Статистика
         cur.execute("SELECT COUNT(DISTINCT user_id) FROM user_sessions")
         total_users = cur.fetchone()[0] or 0
 
@@ -101,6 +111,7 @@ async def admin_panel():
 
         total_revenue = successful_payments * 100  # 100 ₽ за анимацию
 
+        # Последние 10 сессий
         cur.execute("""
             SELECT user_id, prompt, status, created_at
             FROM user_sessions
@@ -111,6 +122,7 @@ async def admin_panel():
         cur.close()
         conn.close()
 
+        # Генерация HTML
         sessions_html = ""
         for user_id, prompt, status, created_at in sessions:
             emoji = "✅" if status == "succeeded" else "⏳"
@@ -174,12 +186,10 @@ async def process_animation_async(user_id: int, payment_id: str):
     try:
         await bot_instance.send_message(chat_id=user_id, text="🎨 Обрабатываю твоё фото... Это займёт 10–60 секунд.")
 
+        # Получаем данные из БД
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            "SELECT file_path, prompt FROM user_sessions WHERE user_id = %s AND payment_id = %s",
-            (user_id, payment_id)
-        )
+        cur.execute("SELECT file_path, prompt FROM user_sessions WHERE user_id = %s AND payment_id = %s", (user_id, payment_id))
         row = cur.fetchone()
         cur.close()
         conn.close()
@@ -205,6 +215,7 @@ async def process_animation_async(user_id: int, payment_id: str):
             await bot_instance.send_animation(chat_id=user_id, animation=animation_url)
             await bot_instance.send_message(chat_id=user_id, text="🎉 Вот твоя анимация! Спасибо за оплату!")
 
+            # Уведомление админу
             if ADMIN_USER_ID:
                 await bot_instance.send_message(
                     chat_id=ADMIN_USER_ID,
@@ -217,10 +228,11 @@ async def process_animation_async(user_id: int, payment_id: str):
         logger.error(f"Replicate error: {e}")
         await bot_instance.send_message(chat_id=user_id, text="❌ Ошибка при обработке. Попробуйте позже.")
 
-# === Telegram Bot ===
+# === Телеграм-бот ===
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Привет! Пришли мне фото и напиши, что ты хочешь увидеть, "
+        "👋 Привет! Пришли мне фото и напиши, что ты хочешь увидеть (например: 'смех, ветер в волосах'), "
         "и я оживлю его за 100 ₽. После оплаты — получишь анимацию!"
     )
 
@@ -278,9 +290,12 @@ def run_bot():
     app_bot.run_polling()
 
 def run_webhook_server():
+    # Render использует порт 10000 по умолчанию для web services
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
 
 if __name__ == "__main__":
+    # Запускаем FastAPI на основном потоке (Render требует это для вебхука)
+    # А бота — в фоновом потоке
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     run_webhook_server()
