@@ -46,7 +46,7 @@ app = FastAPI()
 
 # === Аутентификация ===
 security = HTTPBasic()
-def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
+async def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
     if credentials.username == ADMIN_LOGIN and credentials.password == ADMIN_PASSWORD:
         return True
     raise HTTPException(status_code=401, detail="Unauthorized")
@@ -69,19 +69,22 @@ async def yookassa_webhook(request: Request):
         payment = notification.object
 
         if payment.status == "succeeded":
-            user_id = int(payment.metadata.get("user_id"))
-            await process_animation_async(user_id, payment.id)
+            user_id = payment.metadata.get("user_id")
+            if user_id:
+                await process_animation_async(int(user_id), payment.id)
 
-            # Синхронная БД
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute(
-                "UPDATE user_sessions SET status = 'succeeded' WHERE payment_id = %s",
-                (payment.id,)
-            )
-            conn.commit()
-            cur.close()
-            conn.close()
+                # Синхронная БД
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute(
+                    "UPDATE user_sessions SET status = 'succeeded' WHERE payment_id = %s",
+                    (payment.id,)
+                )
+                conn.commit()
+                cur.close()
+                conn.close()
+            else:
+                logger.error("User ID not found in payment metadata.")
     except Exception as e:
         logger.error(f"Webhook error: {e}")
 
@@ -126,8 +129,8 @@ async def admin_panel():
         <head><meta charset="utf-8"><title>Админка</title></head>
         <body>
             <h1>🤖 Админ-панель</h1>
-            <p>Всего пользователей: {total_users}</p>
-            <p>Успешных оплат: {successful_payments}</p>
+            <p>Всего пользователей: {total_users or 0}</p>
+            <p>Успешных оплат: {successful_payments or 0}</p>
             <p>Доход: {format_currency(total_revenue)}</p>
             <table border="1">
                 <tr><th>User ID</th><th>Промпт</th><th>Статус</th><th>Дата</th></tr>
@@ -145,6 +148,10 @@ async def admin_panel():
 bot_instance = None
 
 async def process_animation_async(user_id: int, payment_id: str):
+    if not bot_instance:
+        logger.error("bot_instance is not set. Unable to send messages.")
+        return
+
     try:
         await bot_instance.send_message(chat_id=user_id, text="🎨 Обрабатываю твоё фото...")
 
@@ -173,75 +180,3 @@ async def process_animation_async(user_id: int, payment_id: str):
 
         if isinstance(output, list) and len(output) > 0:
             animation_url = output[0]
-            await bot_instance.send_animation(chat_id=user_id, animation=animation_url)
-            await bot_instance.send_message(chat_id=user_id, text="🎉 Вот твоя анимация!")
-
-            if ADMIN_USER_ID:
-                await bot_instance.send_message(chat_id=ADMIN_USER_ID, text=f"💰 Новая оплата!\nUser: {user_id}\nДоход: +100 ₽")
-        else:
-            await bot_instance.send_message(chat_id=user_id, text="❌ Не удалось получить анимацию.")
-
-    except Exception as e:
-        logger.error(f"Replicate error: {e}")
-        await bot_instance.send_message(chat_id=user_id, text="❌ Ошибка при обработке. Попробуйте позже.")
-
-# === Телеграм-бот ===
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Привет! Отправь фото для анимации.")
-
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not update.message.photo:
-        await update.message.reply_text("📸 Пожалуйста, отправь фото.")
-        return
-
-    photo = update.message.photo[-1]
-    prompt = update.message.caption.strip() if update.message.caption else "анимировать изображение"
-    file = await context.bot.get_file(photo.file_id)
-    file_path = file.file_path
-
-    payment = Payment.create({
-        "amount": {"value": "100.00", "currency": "RUB"},
-        "confirmation": {"type": "redirect", "return_url": f"https://t.me/{context.bot.username}"},
-        "capture": True,
-        "description": f"Оживление фото для {user_id}",
-        "metadata": {"user_id": str(user_id)}
-    })
-
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO user_sessions (user_id, file_path, prompt, payment_id, status)
-        VALUES (%s, %s, %s, %s, %s)
-        ON CONFLICT (user_id) DO UPDATE SET
-            file_path = EXCLUDED.file_path,
-            prompt = EXCLUDED.prompt,
-            payment_id = EXCLUDED.payment_id,
-            status = EXCLUDED.status
-    """, (user_id, file_path, prompt, payment.id, "awaiting_payment"))
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    keyboard = [[InlineKeyboardButton("💳 Оплатить 100 ₽", url=payment.confirmation.confirmation_url)]]
-    await update.message.reply_text("✅ Фото получено! Оплати 100 ₽ для обработки.", reply_markup=InlineKeyboardMarkup(keyboard))
-
-# === Запуск ===
-def run_bot():
-    global bot_instance
-    app_bot = Application.builder().token(BOT_TOKEN).build()
-    bot_instance = app_bot.bot
-
-    app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-
-    app_bot.run_polling()
-
-def run_webhook_server():
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
-
-if __name__ == "__main__":
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-
-    run_webhook_server()
