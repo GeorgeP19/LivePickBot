@@ -1,107 +1,173 @@
-﻿# -*- coding: utf-8 -*-
-import os
-import logging
-import aiohttp
-from aiohttp import web
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from yookassa import Configuration, Payment
+﻿import os
+import threading
+import time
+import requests
+from flask import Flask, request, jsonify
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# ================= Настройки =================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
-YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
-YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # например: https://your-app.onrender.com/webhook
+# Конфигурация (будет брать из переменных окружения)
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
+YUKASSA_API_TOKEN = os.environ.get('YUKASSA_API_TOKEN')
+REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
+REPLICATE_MODEL_VERSION_ID = os.environ.get('REPLICATE_MODEL_VERSION_ID')
+WEBHOOK_HOST = os.environ.get('WEBHOOK_HOST')  # публичный HTTPS адрес, например, https://abc.ngrok.io
+WEBHOOK_PATH = '/webhook'
+PORT = int(os.environ.get('PORT', 8443))
 
-if not all([BOT_TOKEN, REPLICATE_API_TOKEN, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, WEBHOOK_URL]):
-    raise ValueError("❌ Проверьте все переменные окружения!")
+app = Flask(__name__)
+application = None  # глобально
 
-# ================= Логирование =================
-logging.basicConfig(level=logging.INFO)
+# Временные хранилища
+USERS = {}  # user_id: {'photo_path', 'prompt'}
+PAYMENTS = {}  # payment_id: {'user_id', 'status'}
 
-# ================= Инициализация бота =================
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-
-# ================= Глобальная aiohttp сессия =================
-session = aiohttp.ClientSession()
-
-# ================= YouKassa =================
-Configuration.account_id = YOOKASSA_SHOP_ID
-Configuration.secret_key = YOOKASSA_SECRET_KEY
-
-# ================= Хендлеры Telegram =================
-
-@dp.message(Command(commands=["start"]))
-async def cmd_start(message: types.Message):
-    await message.reply(
-        "Привет! Я оживляю фото 😎\n"
-        "Отправь мне фотографию, и я покажу, как она оживает после оплаты 100₽."
-    )
-
-@dp.message(types.Message.photo)
-async def handle_photo(message: types.Message):
-    photo = message.photo[-1]
-    photo_path = f"user_photo_{message.from_user.id}.jpg"
-    await bot.download(photo.file_id, photo_path)
-    await message.reply("Фото получено! Создаём счёт на оплату 100₽...")
-
-    # Создаём платёж через YouKassa
-    payment = Payment.create({
+# --- ЮKassa API ---
+def create_yookassa_payment(amount_rub, description, user_id):
+    url = "https://api.yookassa.ru/v3/payments"
+    headers = {
+        "Authorization": f"Bearer {YUKASSA_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    data = {
         "amount": {
-            "value": "100.00",
+            "value": f"{amount_rub:.2f}",
             "currency": "RUB"
         },
         "confirmation": {
             "type": "redirect",
-            "return_url": WEBHOOK_URL
+            "return_url": "https://your-return-url"
         },
         "capture": True,
-        "description": f"Оживление фото для {message.from_user.id}"
-    })
+        "metadata": {
+            "user_id": str(user_id)
+        }
+    }
+    resp = requests.post(url, json=data, headers=headers)
+    if resp.status_code == 201:
+        return resp.json()
+    else:
+        print("Yookassa create error:", resp.text)
+        return None
 
-    await message.reply(f"💳 Оплатите 100₽ по ссылке: {payment.confirmation.confirmation_url}")
+def check_yookassa_payment(payment_id):
+    url = f"https://api.yookassa.ru/v3/payments/{payment_id}"
+    headers = {
+        "Authorization": f"Bearer {YUKASSA_API_TOKEN}"
+    }
+    resp = requests.get(url, headers=headers)
+    if resp.status_code == 200:
+        return resp.json()
+    else:
+        print("Yookassa check error:", resp.text)
+        return None
 
-# ================= Webhook YouKassa =================
-async def handle_payment_webhook(request):
-    data = await request.json()
-    logging.info(f"Получен вебхук YouKassa: {data}")
-    return web.Response(text="OK")
+# --- Replicate ---
+def process_image_with_replicate(image_path, prompt):
+    url = "https://api.replicate.com/v1/predictions"
+    headers = {
+        "Authorization": f"Token {REPLICATE_API_TOKEN}"
+    }
+    # отправляем запрос
+    json_data = {
+        "version": REPLICATE_MODEL_VERSION_ID,
+        "input": {
+            "prompt": prompt
+        }
+    }
+    with open(image_path, 'rb') as img:
+        files = {'file': (os.path.basename(image_path), img, 'application/octet-stream')}
+        resp = requests.post(url, headers=headers, json=json_data)
+        if resp.status_code == 201:
+            pred = resp.json()
+            pred_id = pred['id']
+            # Ожидание результата
+            for _ in range(10):
+                time.sleep(3)
+                status_res = requests.get(f"https://api.replicate.com/v1/predictions/{pred_id}", headers=headers)
+                if status_res.json().get('status') == 'succeeded':
+                    return status_res.json().get('output')
+            return None
+        else:
+            print("Replicate error:", resp.text)
+            return None
 
-# ================= Healthcheck =================
-async def handle_healthcheck(request):
-    return web.Response(text="Bot is alive")
+# --- Telegram Handlers ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Отправьте фотографию, а затем напишите описание для обработки.")
 
-# ================= WebService =================
-app = web.Application()
-app.add_routes([
-    web.get("/", handle_healthcheck),
-    web.post("/webhook", bot.webhook_handler()),
-    web.post("/payment", handle_payment_webhook)
-])
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    photo = update.message.photo[-1]
+    filename = f"{user_id}_photo.jpg"
+    await photo.get_file().download_to_drive(filename)
+    USERS[user_id] = {'photo_path': filename}
+    await update.message.reply_text("Теперь напишите описание (промпт) для обработки этого изображения.")
 
-# Закрытие сессий при завершении
-async def on_cleanup(app):
-    await session.close()
-    await bot.session.close()
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id not in USERS or 'photo_path' not in USERS[user_id]:
+        await update.message.reply_text("Пожалуйста, отправьте фото сначала.")
+        return
+    prompt = update.message.text
+    USERS[user_id]['prompt'] = prompt
 
-app.on_cleanup.append(on_cleanup)
+    # Создаем оплату
+    payment = create_yookassa_payment(100, "Обработка изображения", user_id)
+    if payment:
+        payment_id = payment['id']
+        PAYMENTS[payment_id] = {'user_id': user_id, 'status': 'pending'}
+        confirmation_url = payment['confirmation']['confirmation_url']
+        keyboard = [[InlineKeyboardButton("Оплатить 100 ₽", url=confirmation_url)]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("Пожалуйста, оплатите 100 ₽", reply_markup=reply_markup)
+    else:
+        await update.message.reply_text("Ошибка при создании платежа.")
 
-# ================= Запуск =================
-if __name__ == "__main__":
+# --- Webhook для уведомлений ---
+@app.route(WEBHOOK_PATH, methods=['POST'])
+def webhook():
+    data = request.json
+    payment_id = data.get('id')
+    status = data.get('status')
+    if payment_id in PAYMENTS:
+        PAYMENTS[payment_id]['status'] = status
+        user_id = PAYMENTS[payment_id]['user_id']
+        if status == 'succeeded':
+            # запустим обработку
+            threading.Thread(target=lambda: asyncio.run(_process_payment(user_id))).start()
+    return jsonify({'status': 'ok'})
+
+import asyncio
+async def _process_payment(user_id):
+    bot = application.bot
+    user_data = USERS.get(user_id)
+    if not user_data:
+        return
+    await bot.send_message(user_id, "Платёж подтверждён! Обрабатываю изображение...")
+    prompt = user_data['prompt']
+    photo_path = user_data['photo_path']
+    result_url = process_image_with_replicate(photo_path, prompt)
+    if result_url:
+        await bot.send_photo(user_id, result_url)
+    else:
+        await bot.send_message(user_id, "Ошибка обработки.")
+
+# --- Основной запуск ---
+async def main():
+    global application
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    # Setting webhook
+    webhook_url = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+    await application.bot.set_webhook(webhook_url)
+    print(f"Webhook установлено: {webhook_url}")
+
+    # Запуск Flask в отдельном потоке
+    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=PORT)).start()
+
+    await application.run_polling()
+
+if __name__ == '__main__':
     import asyncio
-    import logging
-
-    logging.info("✅ Запуск бота через WebService на Render")
-    
-    # Telegram Webhook
-    async def setup_webhook():
-        await bot.delete_webhook(drop_pending_updates=True)
-        await bot.set_webhook(WEBHOOK_URL)
-
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(setup_webhook())
-    
-    # Запуск aiohttp сервера
-    web.run_app(app, host="0.0.0.0", port=10000)
+    asyncio.run(main())

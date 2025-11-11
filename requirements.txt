@@ -1,5 +1,3 @@
-aiogram==3.*
-python-dotenv
-yookassa
-replicate
+python-telegram-bot
+-flask
 requests
