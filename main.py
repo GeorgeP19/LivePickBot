@@ -9,9 +9,9 @@ from yookassa import Configuration, Payment
 # не нужен, но оставим python-telegram-bot
 # import psycopg2
 # from psycopg2.extras import RealDictCursor
-# from fastapi import FastAPI, Request, Depends, HTTPException
-# from fastapi.responses import HTMLResponse
-# from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi import FastAPI, Request, Depends, HTTPException
+from fastapi.responses import HTMLResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 import uvicorn
 import threading
@@ -288,4 +288,5 @@ if __name__ == "__main__":
     bot_thread.start()
 
     run_webhook_server()
+
 
