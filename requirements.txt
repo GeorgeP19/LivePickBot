@@ -1,5 +1,5 @@
 python-telegram-bot==20.6
-replicate==25.3
+replicate==1.0.7
 yookassa==3.7.0
 psycopg2-binary==2.9.9
 fastapi==0.111.0
