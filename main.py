@@ -53,7 +53,7 @@ async def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
         return True
     raise HTTPException(status_code=401, detail="Unauthorized")
 
-# === Корень / для проверки ===
+# === Корень для проверки сервера ===
 @app.get("/")
 async def root():
     return {"status": "ok", "message": "Бот и сервер FastAPI работают!"}
@@ -63,7 +63,7 @@ async def root():
 async def yookassa_webhook(request: Request):
     payload = await request.body()
     signature = request.headers.get("X-Cloud-Signature")
-
+    
     from yookassa.domain.notification import WebhookNotification
 
     try:
@@ -73,18 +73,20 @@ async def yookassa_webhook(request: Request):
         if payment.status == "succeeded":
             user_id = payment.metadata.get("user_id")
             if user_id:
+                # Асинхронная обработка анимации
                 await process_animation_async(int(user_id), payment.id)
 
                 # Синхронная БД
                 conn = get_db_connection()
-                cur = conn.cursor()
-                cur.execute(
-                    "UPDATE user_sessions SET status = 'succeeded' WHERE payment_id = %s",
-                    (payment.id,)
-                )
-                conn.commit()
-                cur.close()
-                conn.close()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE user_sessions SET status = 'succeeded' WHERE payment_id = %s",
+                            (payment.id,)
+                        )
+                        conn.commit()
+                finally:
+                    conn.close()
             else:
                 logger.error("User ID not found in payment metadata.")
     except Exception as e:
@@ -100,32 +102,32 @@ def format_currency(rubles: int) -> str:
 async def admin_panel():
     try:
         conn = get_db_connection()
-        cur = conn.cursor()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT COUNT(DISTINCT user_id) AS total_users FROM user_sessions")
+                total_users = cur.fetchone()["total_users"] or 0
 
-        cur.execute("SELECT COUNT(DISTINCT user_id) FROM user_sessions")
-        total_users = cur.fetchone()[0] or 0
+                cur.execute("SELECT COUNT(*) AS successful_payments FROM user_sessions WHERE status = 'succeeded'")
+                successful_payments = cur.fetchone()["successful_payments"] or 0
 
-        cur.execute("SELECT COUNT(*) FROM user_sessions WHERE status = 'succeeded'")
-        successful_payments = cur.fetchone()[0] or 0
+                total_revenue = successful_payments * 100  # цена за сессию
 
-        total_revenue = successful_payments * 100  # цена за сессию
-
-        cur.execute("""
-            SELECT user_id, prompt, status, created_at
-            FROM user_sessions
-            ORDER BY created_at DESC
-            LIMIT 10
-        """)
-        sessions = cur.fetchall()
-        cur.close()
-        conn.close()
+                cur.execute("""
+                    SELECT user_id, prompt, status, created_at
+                    FROM user_sessions
+                    ORDER BY created_at DESC
+                    LIMIT 10
+                """)
+                sessions = cur.fetchall()
+        finally:
+            conn.close()
 
         sessions_html = ""
-        for user_id, prompt, status, created_at in sessions:
-            emoji = "✅" if status == "succeeded" else "⏳"
+        for session in sessions:
+            emoji = "✅" if session["status"] == "succeeded" else "⏳"
             sessions_html += (
-                f"<tr><td>{user_id}</td><td>{prompt[:50]}...</td>"
-                f"<td>{emoji} {status}</td><td>{created_at.strftime('%Y-%m-%d %H:%M')}</td></tr>"
+                f"<tr><td>{session['user_id']}</td><td>{session['prompt'][:50]}...</td>"
+                f"<td>{emoji} {session['status']}</td><td>{session['created_at'].strftime('%Y-%m-%d %H:%M')}</td></tr>"
             )
 
         html = f"""
@@ -145,9 +147,14 @@ async def admin_panel():
         </html>
         """
         return HTMLResponse(html)
+
     except Exception as e:
         logger.error(f"Admin panel error: {e}")
         return HTMLResponse(f"<h1>Ошибка: {e}</h1>", status_code=500)
+
+
+
+
 
 # === Асинхронная обработка анимации ===
 bot_instance = None
@@ -201,6 +208,7 @@ async def process_animation_async(user_id: int, payment_id: str):
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         await bot_instance.send_message(chat_id=user_id, text="❌ Произошла ошибка. Попробуйте позже.")
+
 
 
 
