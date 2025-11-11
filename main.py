@@ -178,5 +178,7 @@ async def process_animation_async(user_id: int, payment_id: str):
             }
         )
 
-        if isinstance(output, list) and len(output) > 0:
-            animation_url = output[0]
+       if isinstance(output, list) and len(output) > 0:
+    animation_url = output[0]
+    else:
+    animation_url = None
