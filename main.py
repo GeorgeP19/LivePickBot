@@ -15,7 +15,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from fastapi import FastAPI, Request, Depends, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 import uvicorn
@@ -55,15 +55,13 @@ async def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
 
 # === Корень для проверки сервера ===
 @app.get("/")
-async def root_get():
+async def root():
     return {"status": "ok", "message": "Бот и сервер FastAPI работают!"}
 
-@app.api_route("/", methods=["POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
-async def root_other_methods(request: Request):
-    return JSONResponse(
-        content={"status": "error", "message": f"Метод {request.method} не поддерживается на этом маршруте."},
-        status_code=405
-    )
+@app.post("/")
+async def root_post(request: Request):
+    logger.info(f"POST на корень от {request.client.host}")
+    return {"status": "ok", "message": "Метод POST на корень принят, но ничего не делает."}
 
 # === Вебхук YooKassa ===
 @app.post("/yookassa_webhook")
@@ -110,7 +108,7 @@ async def admin_panel():
     try:
         conn = get_db_connection()
         try:
-            with conn.cursor(cursor_factory=psycopg.rows.dict_row) as cur:
+            with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute("SELECT COUNT(DISTINCT user_id) AS total_users FROM user_sessions")
                 total_users = cur.fetchone()["total_users"] or 0
 
@@ -171,7 +169,7 @@ async def process_animation_async(user_id: int, payment_id: str):
         await bot_instance.send_message(chat_id=user_id, text="🎨 Обрабатываю твоё фото...")
 
         conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=psycopg.rows.dict_row)
+        cur = conn.cursor(row_factory=dict_row)
         cur.execute(
             "SELECT file_path, prompt FROM user_sessions WHERE user_id = %s AND payment_id = %s",
             (user_id, payment_id)
