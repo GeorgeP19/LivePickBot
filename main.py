@@ -12,7 +12,7 @@ import yookassa
 from yookassa import Configuration, Payment
 
 import psycopg
-from psycopg.extras import RealDictCursor
+from psycopg.rows import dict_row
 
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse
@@ -201,6 +201,7 @@ async def process_animation_async(user_id: int, payment_id: str):
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         await bot_instance.send_message(chat_id=user_id, text="❌ Произошла ошибка. Попробуйте позже.")
+
 
 
 
