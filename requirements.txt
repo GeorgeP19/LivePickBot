@@ -1,7 +1,9 @@
 python-telegram-bot==20.6
 replicate==1.0.7
 yookassa==3.7.0
-psycopg2-binary==2.9.9
 fastapi==0.111.0
 uvicorn==0.30.6
 aiofiles==23.2.1
+psycopg[binary]
+
+
