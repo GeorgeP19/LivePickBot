@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import asyncio
 import os
 import threading
@@ -15,7 +15,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from fastapi import FastAPI, Request, Depends, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 import uvicorn
@@ -55,8 +55,15 @@ async def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
 
 # === Корень для проверки сервера ===
 @app.get("/")
-async def root():
+async def root_get():
     return {"status": "ok", "message": "Бот и сервер FastAPI работают!"}
+
+@app.api_route("/", methods=["POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+async def root_other_methods(request: Request):
+    return JSONResponse(
+        content={"status": "error", "message": f"Метод {request.method} не поддерживается на этом маршруте."},
+        status_code=405
+    )
 
 # === Вебхук YooKassa ===
 @app.post("/yookassa_webhook")
@@ -103,7 +110,7 @@ async def admin_panel():
     try:
         conn = get_db_connection()
         try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            with conn.cursor(cursor_factory=psycopg.rows.dict_row) as cur:
                 cur.execute("SELECT COUNT(DISTINCT user_id) AS total_users FROM user_sessions")
                 total_users = cur.fetchone()["total_users"] or 0
 
@@ -152,10 +159,6 @@ async def admin_panel():
         logger.error(f"Admin panel error: {e}")
         return HTMLResponse(f"<h1>Ошибка: {e}</h1>", status_code=500)
 
-
-
-
-
 # === Асинхронная обработка анимации ===
 bot_instance = None
 
@@ -168,7 +171,7 @@ async def process_animation_async(user_id: int, payment_id: str):
         await bot_instance.send_message(chat_id=user_id, text="🎨 Обрабатываю твоё фото...")
 
         conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur = conn.cursor(cursor_factory=psycopg.rows.dict_row)
         cur.execute(
             "SELECT file_path, prompt FROM user_sessions WHERE user_id = %s AND payment_id = %s",
             (user_id, payment_id)
@@ -208,8 +211,3 @@ async def process_animation_async(user_id: int, payment_id: str):
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         await bot_instance.send_message(chat_id=user_id, text="❌ Произошла ошибка. Попробуйте позже.")
-
-
-
-
-
