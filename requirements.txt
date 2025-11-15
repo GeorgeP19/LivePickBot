@@ -1,10 +1,10 @@
-aiogram==3.6.0
-fastapi==0.95.2          # последняя версия на Pydantic v1
+aiogram==2.25.1
+fastapi==0.95.2
 uvicorn==0.27.1
-sqlalchemy==1.4.49       # совместима с Pydantic v1
+sqlalchemy==1.4.49
 psycopg2-binary
 python-dotenv==1.0.1
 httpx==0.26.0
 replicate==0.19.0
 aiofiles==23.2.1
-pydantic==1.10.14        # ← ВАЖНО: v1, без Rust
+pydantic==1.10.14
